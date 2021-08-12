@@ -1,0 +1,287 @@
+---
+title: "Student Performance"
+author: "Troy"
+date: "8/12/2021"
+output: html_document
+---
+
+```{r}
+
+#' ### Import the data and inspect the data
+
+suppressPackageStartupMessages({
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(GGally)
+library(tidyr)
+library(rmarkdown)
+library(leaps)
+library(MASS)
+library(rpart)
+library(rpart.plot)
+select <- dplyr::select
+})
+
+#'Load the data
+math <- read.csv("/Users/troy/Desktop/student/student-mat.csv", sep=";")
+
+#' Check out the data type
+str(math)
+
+#' See if there are any null values
+sapply(math,function(x) sum(is.na(x)))
+
+#' Check out the distribution of the G3 score, there are value 0
+hist(math$G3)
+
+#' Drop rows where G3 value is 0 
+math <- subset(math,G3 != 0)
+
+#' Check again
+hist(math$G3)
+
+
+#' # Exploratory Data Analysis 
+
+#' Make dummy variables for correlation matrix
+dmy <- dummyVars("~.", data=math, fullRank=TRUE)
+dummy_math <- data.frame(predict(dmy, newdata=math))
+cor(dummy_math, method = "pearson", use = "complete.obs")%>%
+  ggcorr(label = F)+ ggtitle("Correlation between Everything")
+
+#' ## Distribution of the `G3` score
+math%>%
+  ggplot(aes(x=G3))+
+  geom_bar()+
+  geom_text(stat='count', aes(label=..count..), vjust=-0.8)
+
+
+#' ## Relationship between `goout` and `AverageScore`
+math$goout <- as.factor(math$goout)
+math_goout <- math %>%
+  group_by(goout)%>%
+  summarise(AverageScore=mean(G3))%>%
+  arrange(desc(AverageScore))
+# Make a line graph with `goout` and `AverageScore`
+math_goout %>%
+  ggplot(aes(x=as.numeric(goout), y=AverageScore))+
+  geom_line(stat="identity")+
+  labs(x="Go out")+ 
+  ggtitle("Correlation Between Average Score and Go Out")
+
+math %>% 
+  ggplot(aes(x=goout, y=G3))+
+  geom_boxplot()
+
+
+#' ## `higher` vs `G3`
+math%>%
+  ggplot(aes(x=G3))+
+  geom_density(aes(color=higher))
+
+#' ## `studytime` vs `G3`
+math%>%
+  ggplot(aes(x=studytime, y=G3))+
+  geom_smooth(method="lm", se=F)
+
+#' ## `Fjob` vs `G3`
+math%>%
+  ggplot(aes(y=G3, fill=Fjob))+
+  geom_boxplot()
+
+#' ## `Mjob vs G3`
+math%>%
+  ggplot(aes(y=G3, fill=Mjob))+
+  geom_boxplot()
+
+
+#' ## `Medu` and `Fedu` vs `G3`
+math_pedu <- math %>%
+  gather(Fedu, Medu, key="Gender", value="Level")
+math_pedu <- math_pedu%>%select(G3, Gender, Level)
+
+math_pedu[,2] <- as.factor(math_pedu[,2])
+str(math_pedu)
+
+math_pedu%>%
+  ggplot(aes(x=Level, y=G3, group=Level))+
+  geom_boxplot()+
+  facet_wrap(~Gender)
+
+# Check how many observations in the first level
+str(filter(math_pedu, Level ==0))
+str(filter(math_pedu, Level ==1))
+
+
+#' ## `fail` vs `G3` by `sex`
+
+math_pf <- math %>%
+  mutate(pass=ifelse(G3>=10, 1, 0), fail = ifelse(G3<10,1, 0)) %>%
+  group_by(sex) %>%
+  summarise(Pass=sum(pass), 
+            Fail=sum(fail))
+
+# Let's make a bar chart base on the fail value for male and female
+math_pf %>%
+  ggplot(aes(x=sex, y=Fail, fill=sex))+
+  geom_bar(stat="identity")
+
+
+#' ## `Dalc` vs `G3`
+math_dalc <- math %>%
+  group_by(Dalc)%>%
+  aggregate(G3~Dalc, data=., mean)%>%
+  arrange(desc(G3))
+# Make a line graph with Dalc and G3
+math_dalc %>%
+  ggplot(aes(x=Dalc, y=G3))+
+  geom_line(stat="identity")
+
+
+
+#' ## `Walc` vs `G3`
+math_walc <- math %>% 
+  aggregate(G3~Walc, data=., FUN = mean) %>%
+  arrange(desc(G3))
+# Make a line graph with Walc and G3
+math_walc %>%
+  ggplot(aes(x=Walc, y=G3))+
+  geom_line(stat="identity")
+
+
+
+#' ## `highter` vs `G3` by `sex`
+math%>%
+  ggplot(aes(x=higher, y=G3))+
+  geom_boxplot()+
+  facet_grid(~sex)
+
+
+#' ## `internet` vs `G3`
+math%>%
+  group_by(internet)%>%
+  ggplot(aes(x=G3, fill=internet))+
+  geom_density(alpha=0.5)
+
+#' ## `absences` vs `G3`
+math %>%
+  ggplot(aes(x=absences, y=G3))+
+  geom_smooth(method="lm")
+
+
+
+#' #Linear Regression
+set.seed(100)
+
+
+# Conver chr to factors for the models
+for (i in c(1:2, 4:6, 9:12, 16:23 )) {
+  math[, i] <- as.factor(math[, i])
+}
+# Remove Fedu, Walc, G1
+math <- subset(math, select=-c(Fedu, Walc, G1))
+
+trainRowNumbers <- createDataPartition(math$G3, p=0.7, list=FALSE)
+train_lm <- math[trainRowNumbers,]
+test_lm <- math[-trainRowNumbers,]
+
+linear_model <-  lm(G3~., train_lm)
+summary(linear_model)
+
+#' ##Evaluate it
+predict_lm = predict(linear_model, data = test_lm)
+results <- cbind(predict_lm, test_lm$G3)
+colnames(results) <- c('Predicted', 'Real')
+results <- as.data.frame(results)
+
+RMSE(results$Predicted, results$Real)
+
+
+#' ## Feature selection
+step.model <- stepAIC(linear_model, direction = "backward", 
+                      trace = F)
+step.model$anova
+summary(step.model)
+
+
+#' ## Evaluate again
+predict_lm2 = predict(step.model, data = test_lm)
+results2 <- cbind(predict_lm2, test_lm$G3)
+colnames(results2) <- c('Predicted', 'Real')
+results2 <- as.data.frame(results2)
+
+RMSE(results2$Predicted, results2$Real)
+
+
+
+
+#' #  Decision tree
+math_tree <- math %>%
+  mutate(pass=ifelse(G3>=10, 1, 0))
+
+# Remove G3
+math_tree <- subset(math_tree, select=-c(G3))
+
+set.seed(100)
+trainRowNumbers <- createDataPartition(math_tree$pass, p=0.7, list=FALSE)
+train <- math_tree[trainRowNumbers,]
+test <- math_tree[-trainRowNumbers,]
+dim(train);dim(test) 
+tree <- rpart(pass ~ .,
+              data = train,
+              method = "class", minsplit = 2, minbucket=1)
+prp(tree)
+
+
+
+
+# Model evaluation
+
+predict_test = predict(tree, newdata = test, type = "class")
+confMat2 <- table(test$pass, predict_test)
+confMat2
+accuracy2 <- sum(diag(confMat2))/sum(confMat2)
+accuracy2
+
+
+
+
+
+
+
+
+
+
+#' # Findings
+#'  Base on the statistical analysis we found that 
+#'  `G2`, `health`, `famrel`, `paidyes` affect `G3` score, It's interesting to see that with more extra paid class, it actually decreases the G3 performance
+#'  \
+#'  
+#'  Some of the important factors that decide if the student will get a above average score are
+#'  `G2`, `goout`, `Fjob`, `freetime`, `Mjob.` Also a very interesting pattern where if a student has gotten above average score 
+#'  in `G2` then if he or she goes out equal to 5 then he or she will get a above average score in `G3`
+#'  and for those students who didn't get a above average `G2` score but got a score over 8 then the father's job plays a crucial part
+#'  those whose father is working in `at_home`, `health`, `service` will have a higher chance achieve a above average G3 score
+
+
+github_document(
+  toc = FALSE,
+  toc_depth = 3,
+  number_sections = FALSE,
+  fig_width = 7,
+  fig_height = 5,
+  dev = "png",
+  df_print = "default",
+  includes = NULL,
+  md_extensions = NULL,
+  hard_line_breaks = TRUE,
+  pandoc_args = NULL,
+  html_preview = TRUE,
+  keep_html = FALSE
+)
+
+
+
+
+```
